@@ -4,17 +4,15 @@ from uuid import UUID
 
 from typing import Optional, Dict, Any, cast, List
 
-from asyncio import AbstractEventLoop
-from twisted.internet.asyncioreactor import AsyncioSelectorReactor  # type: ignore
-from txdbus import client  # type: ignore
-from txdbus.objects import RemoteDBusObject  # type: ignore
+from dbus_next.aio import MessageBus, ProxyObject
+from dbus_next import BusType
 
 from bless.backends.server import BaseBlessServer  # type: ignore
 from bless.backends.bluezdbus.characteristic import BlessGATTCharacteristicBlueZDBus
 from bless.backends.bluezdbus.dbus.application import (  # type: ignore
     BlueZGattApplication,
 )
-from bless.backends.bluezdbus.dbus.utils import get_adapter  # type: ignore
+from bless.backends.bluezdbus.dbus.adapter import BlueZGattAdapter  # type: ignore
 from bless.backends.bluezdbus.dbus.characteristic import (  # type: ignore
     BlueZGattCharacteristic,
 )
@@ -38,38 +36,39 @@ class BlessServerBlueZDBus(BaseBlessServer):
 
     """
 
-    def __init__(self, name: str, loop: AbstractEventLoop = None, **kwargs):
-        super(BlessServerBlueZDBus, self).__init__(loop=loop, **kwargs)
+    def __init__(self, name: str, adapter: str = 'hci0', **kwargs):
+        super(BlessServerBlueZDBus, self).__init__(**kwargs)
         self.name: str = name
-        self.reactor: AsyncioSelectorReactor = AsyncioSelectorReactor(
-            cast(asyncio.unix_events._UnixSelectorEventLoop, loop)
-        )
+        self._adapter_path = f'/org/bluez/{adapter}'
 
         self.services: Dict[str, BlessGATTServiceBlueZDBus] = {}
 
-        self.setup_task: asyncio.Task = self.loop.create_task(self.setup())
+        # self.setup_task: asyncio.Task = self.loop.create_task(self.setup())
 
     async def setup(self):
         """
         Asyncronous side of init
         """
-        self.bus: client = await client.connect(self.reactor, "system").asFuture(
-            self.loop
-        )
+        self.bus: MessageBus = MessageBus(bus_type=BusType.SYSTEM)
+        await self.bus.connect()
 
-        gatt_name: str = self.name.replace(" ", "")
-        self.app: BlueZGattApplication = BlueZGattApplication(
-            gatt_name, "org.bluez." + gatt_name, self.bus, self.loop
-        )
+        self.adapter = BlueZGattAdapter(self.bus)
+        await self.adapter.get_adapter(self._adapter_path)
+        await self.adapter.ensure_power_on()
+        await self.adapter.check_compat()
 
-        self.app.Read = self.read
-        self.app.Write = self.write
+        # gatt_name: str = self.name.replace(" ", "")
+        # self.app: BlueZGattApplication = BlueZGattApplication(
+        #     gatt_name, "org.bluez." + gatt_name, self.bus, self.loop
+        # )
 
-        # We don't need to define these
-        self.app.StartNotify = lambda x: None
-        self.app.StopNotify = lambda x: None
+        # self.app.Read = self.read
+        # self.app.Write = self.write
 
-        self.adapter: RemoteDBusObject = await get_adapter(self.bus, self.loop)
+        # # We don't need to define these
+        # self.app.StartNotify = lambda x: None
+        # self.app.StopNotify = lambda x: None
+
 
     async def start(self, **kwargs) -> bool:
         """
